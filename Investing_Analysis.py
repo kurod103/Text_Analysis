@@ -14,7 +14,7 @@ from nltk.stem import WordNetLemmatizer
 lemmatizer = WordNetLemmatizer()
 from collections import Counter
 import yfinance as yf
-import pandas as pd
+#import pandas as pd
 
 def get_site(html): # Return a soup of the website requested
     html_get = requests.get(html)
@@ -70,7 +70,7 @@ def return_comment_vector(times,vote,comment): #returns a vector of comments, gi
         comment_vector.append([times[i],vote[i],comment[i]])
     return comment_vector
 
-def generate_prices():
+def generate_prices(): #create a vector of prices in times
     prices = yf.download(tickers="NG=F", period="1d", interval="1m")
     minute_prices = [round(prices.get("Close")[i],2) for i in range(len(prices))]
     
@@ -80,22 +80,38 @@ def generate_prices():
 
 Minute_Prices, Hour_Prices = generate_prices()
 
+"""Convert comment price targets into relative numbers"""
+
 def get_price_at_time(time): #returns the investing.com price at X hours/minutes ago
     number = int(time[0])
     if time[1] == "hour" or time[1]=="hours":
         return Hour_Prices[-number]
     return Minute_Prices[-number]
 
-def convert_estimation(time, estimation):
-    difference = estimation-get_price_at_time(time)
-    return difference
+def convert_estimation(time, estimation,conv_type): #find difference between est and real price at posting time
+    current_price = get_price_at_time(time)
+    
+    if conv_type == "full":
+        difference = estimation-current_price
+    elif conv_type == "dec":
+        difference1 = estimation-current_price%1
+        difference2 = estimation - current_price%1 + 1
+        if abs(difference1) > abs(difference2): 
+            difference = difference2
+        else:
+            difference = difference1
+    return round(difference,4)
 
-def find_estimations(comment,time):
+def find_estimations(comment,time): #find estimation in a comment line
     for word in range(len(comment)):
         try:
             float(comment[word])
-            if bool(re.search(" \d\.\d*",comment[word])):
-                comment[word]= convert_estimation(time, float(comment[word]))
+            if bool(re.search("\d\.\d*",comment[word])):
+                comment[word]= convert_estimation(time, float(comment[word]),"full")
+            elif bool(re.search("\.\d*",comment[word])) and float(comment[word])<1:
+                comment[word]= convert_estimation(time,float(comment[word]),"dec")
+            elif float(comment[word])>=1 and float(comment[word])<10:
+                comment[word]=convert_estimation(time,float(comment[word]),"full")
         except ValueError:
             pass
     return comment
@@ -132,7 +148,7 @@ Pages.fix_estimations()
 
 comments = return_comment_vector(Pages.times,Pages.vote, Pages.comment_lemmatized)
 
+
 for comment in comments:
     print(comment)
     print()
-
