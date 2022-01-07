@@ -13,7 +13,8 @@ from nltk.corpus import wordnet
 from nltk.stem import WordNetLemmatizer
 lemmatizer = WordNetLemmatizer()
 from collections import Counter
-import investpy
+import yfinance as yf
+import pandas as pd
 
 def get_site(html): # Return a soup of the website requested
     html_get = requests.get(html)
@@ -41,12 +42,6 @@ def return_features_investing(site): #Returns the comment section in 3 lists
     
     return text_times, text_values, text_words
 
-def return_comment_vector(times,vote,comment): #returns a vector of comments, given 3 lists
-    comment_vector = []
-    for i in range(len(comment)):
-        comment_vector.append([times[i],vote[i],comment[i]])
-    return comment_vector
-
 def get_part_of_speech(word): #for lemmatization
   probable_part_of_speech = wordnet.synsets(word)
   
@@ -66,16 +61,45 @@ def lemmatize_vector(comments): #lemmatize a list of comments
     for i in range(len(comments)):
         lemmatized_comments.append([lemmatizer.lemmatize(token, get_part_of_speech(token)).lower()
                                     for token in comments_token[i]])
+        #lemmatized_comments[i] = re.sub("\!*\?*\.*\,*\:*","",lemmatized_comments[i])
     return lemmatized_comments
+        
+def return_comment_vector(times,vote,comment): #returns a vector of comments, given 3 lists
+    comment_vector = []
+    for i in range(len(comment)):
+        comment_vector.append([times[i],vote[i],comment[i]])
+    return comment_vector
 
-def get_price_at_time(time,ticker): #returns the investing.com price at X hours/minutes ago
-    price = 0
-    return price
+def generate_prices():
+    prices = yf.download(tickers="NG=F", period="1d", interval="1m")
+    minute_prices = [round(prices.get("Close")[i],2) for i in range(len(prices))]
+    
+    prices = yf.download(tickers="NG=F", period="1d", interval="1h")
+    hour_prices = [round(prices.get("Close")[i],2) for i in range(len(prices))]
+    return minute_prices, hour_prices
 
-def convert_estimation(price_at_time, estimation):
-    difference = estimation-price_at_time
+Minute_Prices, Hour_Prices = generate_prices()
+
+def get_price_at_time(time): #returns the investing.com price at X hours/minutes ago
+    number = int(time[0])
+    if time[1] == "hour" or time[1]=="hours":
+        return Hour_Prices[-number]
+    return Minute_Prices[-number]
+
+def convert_estimation(time, estimation):
+    difference = estimation-get_price_at_time(time)
     return difference
 
+def find_estimations(comment,time):
+    for word in range(len(comment)):
+        try:
+            float(comment[word])
+            if bool(re.search(" \d\.\d*",comment[word])):
+                comment[word]= convert_estimation(time, float(comment[word]))
+        except ValueError:
+            pass
+    return comment
+        
 class Investing_Page():
     def __init__(self):
         self.times = []
@@ -90,7 +114,12 @@ class Investing_Page():
 
     def lemmatize_comments(self):
         self.comment_lemmatized = lemmatize_vector(self.comment)
-
+        
+    def fix_estimations(self):
+        comments=[]
+        for i in range(len(self.comment_lemmatized)):
+            comments.append(find_estimations(self.comment_lemmatized[i],self.times[i]))
+        self.comment_lemmatized = comments
 
 html = "https://www.investing.com/commodities/natural-gas-commentary"
 
@@ -99,8 +128,11 @@ for page in range(1,2):
     page_html = html + "/" + str(page)
     Pages.add_page(page_html)
 Pages.lemmatize_comments()
+Pages.fix_estimations()
 
 comments = return_comment_vector(Pages.times,Pages.vote, Pages.comment_lemmatized)
+
 for comment in comments:
     print(comment)
     print()
+
