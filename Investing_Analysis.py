@@ -8,13 +8,14 @@ Created on Thu Jan  6 18:02:28 2022
 from bs4 import BeautifulSoup
 import requests
 import re
-from nltk import word_tokenize
-from nltk.corpus import wordnet
-from nltk.stem import WordNetLemmatizer
-lemmatizer = WordNetLemmatizer()
-from collections import Counter
+
 import yfinance as yf
 #import pandas as pd
+import Text_Processing
+import Convert_Estimation
+import statistics
+
+#import SpaCy
 
 def get_site(html): # Return a soup of the website requested
     html_get = requests.get(html)
@@ -41,28 +42,6 @@ def return_features_investing(site): #Returns the comment section in 3 lists
     #text_words = [word_tokenize(text_words[i]) for i in range(len(text_words))]
     
     return text_times, text_values, text_words
-
-def get_part_of_speech(word): #for lemmatization
-  probable_part_of_speech = wordnet.synsets(word)
-  
-  pos_counts = Counter()
-
-  pos_counts["n"] = len(  [ item for item in probable_part_of_speech if item.pos()=="n"]  )
-  pos_counts["v"] = len(  [ item for item in probable_part_of_speech if item.pos()=="v"]  )
-  pos_counts["a"] = len(  [ item for item in probable_part_of_speech if item.pos()=="a"]  )
-  pos_counts["r"] = len(  [ item for item in probable_part_of_speech if item.pos()=="r"]  )
-  
-  most_likely_part_of_speech = pos_counts.most_common(1)[0][0]
-  return most_likely_part_of_speech
-
-def lemmatize_vector(comments): #lemmatize a list of comments
-    comments_token = [word_tokenize(comments[i]) for i in range(len(comments))]
-    lemmatized_comments = []
-    for i in range(len(comments)):
-        lemmatized_comments.append([lemmatizer.lemmatize(token, get_part_of_speech(token)).lower()
-                                    for token in comments_token[i]])
-        #lemmatized_comments[i] = re.sub("\!*\?*\.*\,*\:*","",lemmatized_comments[i])
-    return lemmatized_comments
         
 def return_comment_vector(times,vote,comment): #returns a vector of comments, given 3 lists
     comment_vector = []
@@ -70,51 +49,21 @@ def return_comment_vector(times,vote,comment): #returns a vector of comments, gi
         comment_vector.append([times[i],vote[i],comment[i]])
     return comment_vector
 
-def generate_prices(): #create a vector of prices in times
-    prices = yf.download(tickers="NG=F", period="1d", interval="1m")
+def generate_prices(ticker): #create a vector of prices in times
+    prices = yf.download(tickers=ticker, period="1d", interval="1m")
     minute_prices = [round(prices.get("Close")[i],2) for i in range(len(prices))]
     
-    prices = yf.download(tickers="NG=F", period="1d", interval="1h")
+    prices = yf.download(tickers=ticker, period="5d", interval="1h")
     hour_prices = [round(prices.get("Close")[i],2) for i in range(len(prices))]
-    return minute_prices, hour_prices
+    return [hour_prices,minute_prices,statistics.stdev(minute_prices)]
 
-Minute_Prices, Hour_Prices = generate_prices()
+Price_Vector = generate_prices("NG=F")
+
+def word_cloud(sentences):
+    
+    return word_cloud
 
 """Convert comment price targets into relative numbers"""
-
-def get_price_at_time(time): #returns the investing.com price at X hours/minutes ago
-    number = int(time[0])
-    if time[1] == "hour" or time[1]=="hours":
-        return Hour_Prices[-number]
-    return Minute_Prices[-number]
-
-def convert_estimation(time, estimation,conv_type): #find difference between est and real price at posting time
-    current_price = get_price_at_time(time)
-    
-    if conv_type == "full":
-        difference = estimation-current_price
-    elif conv_type == "dec":
-        difference1 = estimation-current_price%1
-        difference2 = estimation - current_price%1 + 1
-        if abs(difference1) > abs(difference2): 
-            difference = difference2
-        else:
-            difference = difference1
-    return round(difference,4)
-
-def find_estimations(comment,time): #find estimation in a comment line
-    for word in range(len(comment)):
-        try:
-            float(comment[word])
-            if bool(re.search("\d\.\d*",comment[word])):
-                comment[word]= convert_estimation(time, float(comment[word]),"full")
-            elif bool(re.search("\.\d*",comment[word])) and float(comment[word])<1:
-                comment[word]= convert_estimation(time,float(comment[word]),"dec")
-            elif float(comment[word])>=1 and float(comment[word])<10:
-                comment[word]=convert_estimation(time,float(comment[word]),"full")
-        except ValueError:
-            pass
-    return comment
         
 class Investing_Page():
     def __init__(self):
@@ -129,26 +78,41 @@ class Investing_Page():
         self.comment = self.comment + comment
 
     def lemmatize_comments(self):
-        self.comment_lemmatized = lemmatize_vector(self.comment)
+        self.comment_lemmatized = Text_Processing.lemmatize_vector(self.comment)
+        
+    def chunked_comments(self,chunk):
+        self.comment_chunked = Text_Processing.chunk_vector(self.comment,chunk)
         
     def fix_estimations(self):
         comments=[]
         for i in range(len(self.comment_lemmatized)):
-            comments.append(find_estimations(self.comment_lemmatized[i],self.times[i]))
+            relative_estimate = Convert_Estimation.find_estimations(self.comment_lemmatized[i],self.times[i],Price_Vector)
+            comments.append(relative_estimate)
         self.comment_lemmatized = comments
-
 html = "https://www.investing.com/commodities/natural-gas-commentary"
 
 Pages = Investing_Page()
-for page in range(1,2):
+for page in range(1,10):
     page_html = html + "/" + str(page)
     Pages.add_page(page_html)
 Pages.lemmatize_comments()
 Pages.fix_estimations()
 
+chunk= "NP: {<DT>?<JJ>*<NN>}"
+print_comments = False
+Pages.chunked_comments(chunk)
+
 comments = return_comment_vector(Pages.times,Pages.vote, Pages.comment_lemmatized)
 
+if print_comments:
+    for comment in comments:
+        print(comment)
+        print()
 
-for comment in comments:
-    print(comment)
-    print()
+bag_of_words = Text_Processing.bag_words(Pages.comment_lemmatized,40)
+
+#Checking the difference in word choice between Longs and Shorts in Natural Gas
+print("short")
+print(Text_Processing.similar_words_to(Pages.comment_lemmatized,"short",40))
+print("long")
+print(Text_Processing.similar_words_to(Pages.comment_lemmatized,"long",40))
